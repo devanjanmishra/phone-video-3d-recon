@@ -1,0 +1,1 @@
+*.ply, *.mp4, *.npz, *.dxf, out/, workdir/, frames/, venv/, __pycache__/, *.pt, checkpoints/
