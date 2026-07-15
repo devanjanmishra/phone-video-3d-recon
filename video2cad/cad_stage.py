@@ -23,7 +23,7 @@ from pathlib import Path
 
 import numpy as np
 
-log = logging.getLogger("home3d.cad")
+log = logging.getLogger("video2cad.cad")
 
 
 def extract_cad(

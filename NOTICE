@@ -1,0 +1,45 @@
+video2cad
+Copyright 2026 Devanjan Mishra
+
+This product includes software developed by Devanjan Mishra, licensed under the
+Apache License, Version 2.0 (see LICENSE).
+
+================================================================================
+THIRD-PARTY COMPONENTS AND MODEL WEIGHTS
+================================================================================
+
+This project is a pipeline. It does not vendor or redistribute any model
+weights; weights are downloaded by the user at runtime from their original
+hosts, under their original licenses. The license of this repository's CODE
+does NOT extend to those weights.
+
+--------------------------------------------------------------------------------
+Depth Anything 3 (DA3)  -  ByteDance Seed
+  Repository: https://github.com/ByteDance-Seed/Depth-Anything-3
+  Paper:      arXiv:2511.10647
+  Code license: Apache License 2.0
+
+  MODEL WEIGHTS - LICENSES DIFFER BY CHECKPOINT. READ BEFORE COMMERCIAL USE:
+
+    DA3NESTED-GIANT-LARGE-1.1   CC BY-NC 4.0   NON-COMMERCIAL ONLY
+        (this repo's default; the only checkpoint giving true metric scale)
+    DA3-GIANT / DA3-LARGE       CC BY-NC 4.0   NON-COMMERCIAL ONLY
+    DA3-BASE / DA3-SMALL        Apache 2.0     commercial use permitted
+
+  If you intend to use video2cad commercially, you must select an Apache-2.0
+  checkpoint via --model, and accept the accompanying loss of accuracy and of
+  absolute metric scale. See the Licensing section of README.md.
+
+  Users are responsible for verifying the current license of any checkpoint on
+  its model card before use; licenses may change independently of this project.
+
+--------------------------------------------------------------------------------
+Open3D            MIT License          https://github.com/isl-org/Open3D
+OpenCV            Apache License 2.0   https://github.com/opencv/opencv
+ezdxf             MIT License          https://github.com/mozman/ezdxf
+NumPy             BSD 3-Clause         https://github.com/numpy/numpy
+PyTorch           BSD 3-Clause         https://github.com/pytorch/pytorch
+
+--------------------------------------------------------------------------------
+COLMAP export format is an interoperability format only; no COLMAP code is
+used or redistributed by this project.

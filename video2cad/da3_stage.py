@@ -19,10 +19,21 @@ from pathlib import Path
 
 import numpy as np
 
-log = logging.getLogger("home3d.da3")
+log = logging.getLogger("video2cad.da3")
 
 DEFAULT_MODEL = "depth-anything/DA3NESTED-GIANT-LARGE-1.1"  # metric scale, CC BY-NC
 APACHE_MODEL = "depth-anything/DA3-BASE"                     # permissive, lower accuracy
+
+
+def _pick_dtype(torch, device) -> "torch.dtype":
+    """bf16 needs Ampere (sm_80+). Turing (GTX 16xx / RTX 20xx) must use fp16."""
+    if device.type != "cuda":
+        return torch.float32
+    major, minor = torch.cuda.get_device_capability(0)
+    if major >= 8:
+        return torch.bfloat16
+    log.info("GPU is sm_%d%d (pre-Ampere) - using fp16 instead of bf16", major, minor)
+    return torch.float16
 
 
 def run_da3(
@@ -34,6 +45,8 @@ def run_da3(
     max_depth: float = 12.0,
     use_ray_pose: bool = True,
     batch_limit: int = 160,
+    device_str: str = "auto",
+    dtype_str: str = "auto",
 ) -> dict:
     """Run DA3 over keyframes and fuse a world-space metric point cloud."""
     import torch
@@ -44,28 +57,56 @@ def run_da3(
 
     if len(frame_paths) > batch_limit:
         log.warning(
-            "%d frames > batch_limit=%d. Truncating uniformly. For full-house "
-            "long videos use DA3-Streaming (see README) or raise the limit if "
-            "you have >24GB VRAM.",
+            "%d frames > batch_limit=%d. Truncating uniformly. For long videos "
+            "use DA3-Streaming (see README) or raise the limit if you have VRAM.",
             len(frame_paths), batch_limit,
         )
         idx = np.linspace(0, len(frame_paths) - 1, batch_limit).astype(int)
         frame_paths = [frame_paths[i] for i in idx]
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    if device.type != "cuda":
-        log.warning("No CUDA GPU found - DA3 on CPU will be extremely slow.")
+    if device_str == "auto":
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    else:
+        device = torch.device(device_str)
 
-    log.info("Loading DA3 model: %s", model_dir)
-    model = DepthAnything3.from_pretrained(model_dir).to(device=device)
+    if device.type != "cuda":
+        log.warning(
+            "Running on CPU - expect ~20-60 min for 30 frames. If you have an "
+            "NVIDIA GPU, your torch is likely the CPU-only wheel; reinstall with "
+            "--index-url https://download.pytorch.org/whl/cu124"
+        )
+    else:
+        vram = torch.cuda.get_device_properties(0).total_memory / 1e9
+        log.info("GPU: %s (%.1f GB)", torch.cuda.get_device_name(0), vram)
+        if vram < 8 and "GIANT" in model_dir.upper():
+            raise RuntimeError(
+                f"{model_dir} needs ~24GB VRAM; you have {vram:.1f}GB. "
+                "Use --model depth-anything/DA3-SMALL (or DA3-BASE) instead. "
+                "Note: only the NESTED models emit metric depth - with SMALL/BASE "
+                "the cloud is up-to-scale and must be rescaled from one known "
+                "measurement before the DXF dimensions are trustworthy."
+            )
+
+    dtype = _pick_dtype(torch, device) if dtype_str == "auto" else getattr(torch, dtype_str)
+    log.info("Loading DA3 model: %s (dtype=%s)", model_dir, dtype)
+    model = DepthAnything3.from_pretrained(model_dir).to(device=device, dtype=dtype)
+    model.eval()
 
     images = [str(p) for p in frame_paths]
     log.info("Running DA3 inference on %d frames (ray pose=%s)...", len(images), use_ray_pose)
     try:
-        pred = model.inference(images, use_ray_pose=use_ray_pose)
-    except TypeError:
-        # older/newer API without the kwarg
-        pred = model.inference(images)
+        with torch.inference_mode():
+            try:
+                pred = model.inference(images, use_ray_pose=use_ray_pose)
+            except TypeError:
+                pred = model.inference(images)  # API without the kwarg
+    except torch.cuda.OutOfMemoryError:
+        torch.cuda.empty_cache()
+        raise RuntimeError(
+            f"CUDA OOM with {len(images)} frames. Global attention is O(N^2) in "
+            "frames: retry with fewer (--batch-limit 16) and/or smaller images "
+            "(--long-edge 504), or switch to DA3-Streaming."
+        ) from None
 
     depth = np.asarray(pred.depth)              # [N,H,W] float32, meters (nested model)
     conf = np.asarray(pred.conf)                # [N,H,W]

@@ -1,10 +1,10 @@
 """
-home3d - monocular home-video -> metric point cloud -> rough CAD.
+video2cad - monocular home-video -> metric point cloud -> rough CAD.
 
 Usage (Windows / anywhere):
-    python pipeline.py --video C:\\videos\\home.mp4 --workdir C:\\recon\\myhome
-    python pipeline.py --video home.mp4 --workdir out --stages frames,recon,cad
-    python pipeline.py --workdir out --stages cad          # re-run CAD only
+    video2cad --video C:\\videos\\home.mp4 --workdir C:\\recon\\myhome
+    python -m video2cad.cli --video home.mp4 --workdir out --stages frames,recon,cad
+    python run.py --workdir out --stages cad               # re-run CAD only
 
 Stages:
     frames  video -> sharp keyframes                (CPU, fast)
@@ -21,7 +21,7 @@ import sys
 from pathlib import Path
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(name)-14s %(message)s")
-log = logging.getLogger("home3d")
+log = logging.getLogger("video2cad")
 
 
 def main() -> int:
@@ -43,6 +43,9 @@ def main() -> int:
     ap.add_argument("--max-depth", type=float, default=12.0, help="clip depth beyond (m)")
     ap.add_argument("--batch-limit", type=int, default=160,
                     help="max frames per DA3 forward pass (VRAM bound)")
+    ap.add_argument("--device", default="auto", help="auto | cuda | cpu")
+    ap.add_argument("--dtype", default="auto",
+                    help="auto | float16 | bfloat16 | float32 (Turing GPUs need float16)")
     # cad
     ap.add_argument("--slice-height", type=float, default=1.2,
                     help="floor-plan cut height above floor (m)")
@@ -60,7 +63,7 @@ def main() -> int:
         if not args.video or not args.video.exists():
             log.error("Stage 'frames' needs --video pointing to an existing file.")
             return 1
-        from home3d.frames import extract_frames
+        from video2cad.frames import extract_frames
         paths = extract_frames(
             args.video, frames_dir,
             target_frames=args.target_frames,
@@ -76,7 +79,7 @@ def main() -> int:
         if not frame_paths:
             log.error("No frames found - run the 'frames' stage first.")
             return 1
-        from home3d.da3_stage import run_da3
+        from video2cad.da3_stage import run_da3
         res = run_da3(
             frame_paths, args.workdir,
             model_dir=args.model,
@@ -84,6 +87,8 @@ def main() -> int:
             voxel_size=args.voxel,
             max_depth=args.max_depth,
             batch_limit=args.batch_limit,
+            device_str=args.device,
+            dtype_str=args.dtype,
         )
         manifest["recon"] = {k: str(v) for k, v in res.items()}
 
@@ -93,7 +98,7 @@ def main() -> int:
         if not pcd.exists():
             log.error("No fused_points.ply - run the 'recon' stage first.")
             return 1
-        from home3d.cad_stage import extract_cad
+        from video2cad.cad_stage import extract_cad
         res = extract_cad(pcd, args.workdir / "cad", slice_height=args.slice_height)
         manifest["cad"] = {k: str(v) for k, v in res.items() if v}
 

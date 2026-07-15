@@ -1,1 +1,89 @@
-*.ply, *.mp4, *.npz, *.dxf, out/, workdir/, frames/, venv/, __pycache__/, *.pt, checkpoints/
+# ---------------------------------------------------------------------------
+# Reconstruction outputs and large binaries.
+# GitHub hard-rejects files >100 MB; PLY/NPZ/video blow past that instantly.
+# If one ever lands in a commit, removing it means rewriting history - so keep
+# this list aggressive.
+# ---------------------------------------------------------------------------
+out/
+output/
+workdir/
+frames/
+recon/
+cad/
+*.ply
+*.npz
+*.obj
+*.stl
+*.dxf
+*.pcd
+*.splat
+manifest.json
+
+# Media
+*.mp4
+*.mov
+*.avi
+*.mkv
+*.MP4
+*.MOV
+*.insv
+
+# Model weights / caches
+*.pt
+*.pth
+*.safetensors
+*.onnx
+checkpoints/
+weights/
+.cache/
+huggingface/
+
+# Exceptions: small curated assets we DO want tracked
+!examples/**/*.png
+!examples/**/*.jpg
+!examples/**/planes.json
+
+# ---------------------------------------------------------------------------
+# Python
+# ---------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+eggs/
+.eggs/
+sdist/
+wheels/
+*.egg-info/
+*.egg
+MANIFEST
+
+# Environments
+venv/
+env/
+ENV/
+.venv/
+.conda/
+
+# Testing / tooling
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+.tox/
+
+# ---------------------------------------------------------------------------
+# Editors / OS
+# ---------------------------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+desktop.ini

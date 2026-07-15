@@ -1,0 +1,55 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "video2cad"
+version = "0.1.0"
+description = "Monocular home walkthrough video to metric 3D point cloud and rough CAD (DXF)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Devanjan Mishra" }]
+keywords = [
+    "3d-reconstruction", "monocular-depth", "point-cloud", "photogrammetry",
+    "depth-anything", "cad", "dxf", "floor-plan", "computer-vision",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Multimedia :: Video",
+    "Topic :: Scientific/Engineering :: Image Processing",
+]
+
+# CPU stages only. The GPU stage needs torch + Depth-Anything-3 installed
+# separately (see README) because torch wheels are CUDA-version specific.
+dependencies = [
+    "numpy>=1.24",
+    "opencv-python>=4.8",
+    "open3d>=0.18",
+    "ezdxf>=1.1",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7", "ruff>=0.4"]
+
+[project.urls]
+Homepage = "https://github.com/devanjanmishra/video2cad"
+Repository = "https://github.com/devanjanmishra/video2cad"
+Issues = "https://github.com/devanjanmishra/video2cad/issues"
+
+[project.scripts]
+video2cad = "video2cad.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["video2cad*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"

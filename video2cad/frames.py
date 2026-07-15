@@ -18,7 +18,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-log = logging.getLogger("home3d.frames")
+log = logging.getLogger("video2cad.frames")
 
 
 def _sharpness(gray: np.ndarray) -> float:

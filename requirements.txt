@@ -1,12 +1,11 @@
-# Core (CPU stages)
-numpy
-opencv-python
+# CPU stages (frames, cad). Equivalent to `pip install -e .`
+numpy>=1.24
+opencv-python>=4.8
 open3d>=0.18
-ezdxf
+ezdxf>=1.1
 
-# Reconstruction (GPU stage) - install torch for YOUR CUDA version first:
+# GPU stage (recon) is NOT listed here: torch wheels are CUDA-version specific
+# and DA3 installs from git. See README "Install".
 #   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
-# then:
 #   pip install xformers
-#   git clone https://github.com/ByteDance-Seed/Depth-Anything-3
-#   cd Depth-Anything-3 && pip install -e .
+#   git clone https://github.com/ByteDance-Seed/Depth-Anything-3 && cd Depth-Anything-3 && pip install -e .
