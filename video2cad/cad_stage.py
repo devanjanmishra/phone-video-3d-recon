@@ -35,6 +35,7 @@ def extract_cad(
     slice_height: float = 1.2,
     slice_thickness: float = 0.10,
     grid_res: float = 0.02,
+    rescale_height: float | None = None,
 ) -> dict:
     import open3d as o3d
 
@@ -43,7 +44,37 @@ def extract_cad(
     log.info("Loaded %d points", len(pcd.points))
 
     # 1. gravity alignment ---------------------------------------------------
-    pcd, T_align = _align_to_gravity(pcd, plane_dist_thresh)
+    # The cloud may still be in arbitrary units here (non-metric checkpoints), so
+    # a fixed metric threshold would be meaningless. Use one relative to the
+    # cloud's own size, which is scale-invariant.
+    diag = float(np.linalg.norm(
+        pcd.get_axis_aligned_bounding_box().get_extent()
+    ))
+    pcd, T_align = _align_to_gravity(pcd, max(1e-6, 0.003 * diag))
+
+    # 1b. rescale if a known height is provided (non-metric models) -----------
+    # After this block the cloud is in TRUE METERS, so the metric thresholds
+    # (plane_dist_thresh, grid_res, slice_*) apply as-is and must NOT be scaled.
+    scale = 1.0
+    if rescale_height is not None:
+        pts = np.asarray(pcd.points).copy()
+        raw_height = np.percentile(pts[:, 2], 98) - np.percentile(pts[:, 2], 2)
+        if raw_height > 1e-6:
+            scale = rescale_height / raw_height
+            log.info(
+                "Rescaling: raw height=%.4f units -> %.3f m (scale=%.4f)",
+                raw_height, rescale_height, scale,
+            )
+            pts *= scale
+            pts[:, 2] -= np.percentile(pts[:, 2], 2)  # re-zero the floor
+            pcd.points = o3d.utility.Vector3dVector(pts)
+        else:
+            log.warning(
+                "Cannot rescale: measured height=%.6f units is degenerate. "
+                "The cloud is probably too sparse or has no vertical extent.",
+                raw_height,
+            )
+
     np.savetxt(out_dir / "alignment_T.txt", T_align)
     aligned_path = out_dir / "aligned_points.ply"
     o3d.io.write_point_cloud(str(aligned_path), pcd)

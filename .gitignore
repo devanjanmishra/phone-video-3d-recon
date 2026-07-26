@@ -5,6 +5,7 @@
 # this list aggressive.
 # ---------------------------------------------------------------------------
 out/
+out_*/
 output/
 workdir/
 frames/
@@ -68,6 +69,15 @@ env/
 ENV/
 .venv/
 .conda/
+
+# DA3 upstream clone (vendored source is in depth_anything_3/)
+Depth-Anything-3/
+
+# uv lock
+uv.lock
+
+# Zip archives
+*.zip
 
 # Testing / tooling
 .pytest_cache/

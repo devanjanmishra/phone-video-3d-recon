@@ -1,4 +1,4 @@
-# video2cad
+# phone-video-3d-recon
 
 **Turn a single handheld home walkthrough video into a metric 3D point cloud, segmented walls/floors, and a rough CAD floor plan (DXF). Offline, Windows-friendly, built on Depth Anything 3.**
 
@@ -14,6 +14,8 @@
 | `recon/fused_points.ply` | `cad/planes_colored.ply` | `cad/house_plan.dxf` in FreeCAD |
 
 No depth sensor, no LiDAR, no turntable, no COLMAP. One phone video in, measurable geometry out.
+
+The Python package is `video2cad`; the repo is `phone-video-3d-recon`.
 
 ---
 
@@ -39,6 +41,7 @@ video.mp4
                → iterative RANSAC planes → planes.json (wall sizes in m)
                → Poisson mesh → mesh.obj / mesh.stl
                → horizontal slice → house_plan.dxf (WALLS layer)
+  └─ viz     : turntable point-cloud GIF + depth-montage GIF           [CPU]
 ```
 
 **On "stitching":** there isn't an explicit one. DA3 processes all keyframes in a
@@ -47,55 +50,125 @@ registration are learned, not post-hoc — every frame's pose comes out in one
 shared world frame. Fusion is then just back-projection plus a 1 cm voxel merge.
 No ICP, no pose graph, no loop closure. See [docs/PIPELINE.md](docs/PIPELINE.md).
 
-## Install (Windows)
+## Install
 
 Requires Python 3.10+ and an NVIDIA GPU (8 GB VRAM minimum, 16–24 GB comfortable).
 
-```powershell
-python -m venv venv
-venv\Scripts\activate
+```bash
+git clone https://github.com/devanjanmishra/phone-video-3d-recon
+cd phone-video-3d-recon
+python -m venv .venv
+source .venv/bin/activate   # Windows: .venv\Scripts\activate
 
-# 1. torch for YOUR CUDA version
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
-pip install xformers
+# 1. torch for YOUR CUDA version (check with nvidia-smi)
+#    CUDA 12.1 (driver 535+):
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+pip install xformers --index-url https://download.pytorch.org/whl/cu121
+#    CUDA 12.4 (driver 550+):
+#    pip install torch torchvision --index-url https://download.pytorch.org/whl/cu124
+#    pip install xformers
 
-# 2. DA3 backbone
-git clone https://github.com/ByteDance-Seed/Depth-Anything-3
-cd Depth-Anything-3; pip install -e .; cd ..
-
-# 3. this pipeline
+# 2. this pipeline (DA3 is vendored - no separate clone needed)
 pip install -e .
 ```
 
-No compiler required — everything is prebuilt wheels. That is precisely why this
-stack beats building COLMAP from source or fighting MASt3R-SLAM on Windows.
+> **Note:** Depth Anything 3 source is vendored inside this repo under
+> `depth_anything_3/`. No separate `git clone` of DA3 is needed. Model weights
+> are fetched at runtime from Hugging Face.
 
 ## Usage
 
-```powershell
-# full run
-video2cad --video C:\videos\home.mp4 --workdir C:\recon\myhome
+### Quick start — get a recommendation
 
-# low VRAM (8 GB): smaller model, fewer frames
-video2cad --video home.mp4 --workdir out --model depth-anything/DA3-LARGE-1.1 --target-frames 120 --batch-limit 80
+```bash
+python recommend.py --video your_video.mp4
+```
 
-# re-tune CAD only, no GPU rerun
-video2cad --workdir out --stages cad --slice-height 1.0
+This prints the optimal model, resolution, batch size, and a ready-to-run command based on your GPU and video.
+
+### Run scripts
+
+```bash
+# Single-pass (all frames in one forward pass — best quality, limited by VRAM)
+python run_single.py home.mp4 out_single --rescale-height 2.1
+python run_single.py home.mp4 out_single --low-res --rescale-height 2.1
+
+# Batch mode (unlimited frames — processes overlapping chunks, aligns with Sim3)
+python run_batch.py home.mp4 out_batch --rescale-height 2.1
+python run_batch.py home.mp4 out_batch --high-model --rescale-height 2.1
+python run_batch.py home.mp4 out_batch --target-frames 200 --rescale-height 2.1
+```
+
+### Direct CLI
+
+```bash
+# Full run (auto-batches if frames > batch-limit)
+video2cad --video home.mp4 --workdir output \
+  --model depth-anything/DA3-SMALL \
+  --target-frames 120 --batch-limit 16 --process-res 336 \
+  --rescale-height 2.1
+
+# Re-tune CAD only, no GPU rerun
+video2cad --workdir output --stages cad --slice-height 1.0 --rescale-height 2.1
+
+# Generate visualization GIFs only
+video2cad --workdir output --stages viz
 ```
 
 Outputs in `<workdir>`: `recon/fused_points.ply`, `cad/aligned_points.ply`,
-`cad/planes_colored.ply`, `cad/planes.json`, `cad/mesh.obj|.stl`, `cad/house_plan.dxf`.
+`cad/planes_colored.ply`, `cad/planes.json`, `cad/mesh.obj|.stl`, `cad/house_plan.dxf`,
+`viz/turntable.gif`, `viz/depth_montage.gif`.
+
+> The `viz` stage renders offscreen via Open3D. On a headless Linux box this
+> needs an EGL-capable Open3D build; if it fails the stage logs the error and
+> the rest of the pipeline still completes. It works out of the box on Windows.
 
 ### Key flags
 
 | Flag | Effect |
 |---|---|
-| `--target-frames` | more = denser and slower; 150–250 for a 2–3 BHK |
+| `--target-frames` | more = denser and slower; 60–120 for a room, 150–250 for a flat |
+| `--batch-limit` | frames per forward pass; set below VRAM limit, auto-batches the rest |
+| `--process-res` | DA3 internal resolution (504/378/336); lower = less VRAM, more frames |
+| `--rescale-height` | known height in meters (door 2.1, ceiling 2.7). **Required for every checkpoint except the NESTED ones** - without it the DXF is not in meters. |
 | `--conf-percentile` | raise (e.g. 55) to drop noisy geometry, at density cost |
 | `--voxel` | 0.005 for fine detail, 0.02 for lighter CAD-oriented clouds |
 | `--max-depth` | clip window/mirror hallucinations (default 12 m) |
 | `--slice-height` | floor-plan cut height above floor (default 1.2 m) |
-| `--model` | `DA3-BASE` for the Apache-2.0 path (see [Licensing](#licensing)) |
+| `--model` | CLI default is `DA3NESTED-GIANT-LARGE-1.1` (metric, needs ~24 GB). The `run_single.py` / `run_batch.py` wrappers default to `DA3-SMALL` instead, because that is what fits 16 GB. Also `DA3-LARGE-1.1`, `DA3-BASE`. |
+
+### VRAM limits (tested on V100 16GB, fp32)
+
+| Model | `--process-res` | Max `--batch-limit` | Quality |
+|---|---|---|---|
+| DA3-SMALL | 504 | 16 | Sharpest per-frame |
+| DA3-SMALL | 378 | 32 | Good balance |
+| **DA3-SMALL** | **336** | **40** | **Best for batched mode** |
+| DA3-LARGE | 504 | 8 | Best depth quality |
+| DA3-LARGE | 336 | 20 | Large model + batch |
+
+> **Ampere+ GPUs (RTX 30xx/40xx/A100)** use bf16, roughly doubling these limits.
+> A 24 GB RTX 4090 can do ~80 frames at 504px with DA3-LARGE in one pass.
+
+### Single-pass vs Batch mode
+
+| | Single pass | Batch mode |
+|---|---|---|
+| **Frames** | Limited by VRAM | Unlimited |
+| **Quality** | Best — global attention sees all frames | Good — Sim(3) alignment at chunk boundaries |
+| **When to use** | Short videos, high VRAM | Long videos, limited VRAM |
+| **Seams** | None | Possible at chunk boundaries |
+
+### Tested configurations (20s portrait home video, V100 16GB)
+
+| Config | Frames | Points | Walls | Floor dims | DXF |
+|---|---|---|---|---|---|
+| DA3-LARGE, 504px, single 8fr | 8 | 15,839 | 0 | 0.6×1.2m | No |
+| DA3-SMALL, 504px, single 16fr | 16 | 64,968 | 3 | 1.5×1.7m | No |
+| DA3-SMALL, 336px, single 40fr | 40 | 36,176 | 5 | 4.8×6.0m | Yes |
+| **DA3-SMALL, 336px, batch 60fr** | **60** | **103,229** | **9** | — | **Yes** |
+
+More frames = more coverage = better geometry. Batch mode removes the VRAM ceiling.
 
 ## Rough-CAD workflow
 
@@ -157,8 +230,9 @@ Read this before commercial use — **the code license and the weights license a
 
 - **This repository's code: Apache-2.0.** Free for commercial use, with an explicit patent grant.
 - **The default checkpoint (`DA3NESTED-GIANT-LARGE-1.1`): CC BY-NC 4.0 — non-commercial only.** It is the default because it is the only one giving true metric scale. Apache-2.0 code does **not** launder a non-commercial weights license.
+- **`DA3-SMALL` / `DA3-BASE` are Apache-2.0** and are what the wrapper scripts use by default, so the common path here is already commercial-safe. Confirm on the model card before relying on it.
 - **For commercial use**, pass an Apache-2.0 checkpoint: `--model depth-anything/DA3-BASE`. You lose accuracy and absolute metric scale. `MapAnything` is the alternative worth evaluating: permissive weights *and* metric.
-- No weights are vendored or redistributed here; they are fetched at runtime from their original hosts under their original terms. Verify the current license on the model card yourself — they can change independently of this project.
+- **DA3 source code is vendored** in `depth_anything_3/` (Apache-2.0, unmodified, license included there). No model *weights* are vendored; they are fetched at runtime from their original hosts under their original terms. Verify the current license on the model card yourself — they can change independently of this project.
 
 See [NOTICE](NOTICE) for the full third-party breakdown.
 
@@ -176,6 +250,13 @@ If this pipeline is useful in your work, cite the model it stands on:
 ```
 
 ## Acknowledgements
+
+This project vendors [Depth Anything 3](https://github.com/ByteDance-Seed/Depth-Anything-3)
+(ByteDance Seed, Apache-2.0) as its reconstruction backbone. The vendored source
+is in `depth_anything_3/` and is subject to the
+[DA3 license](https://github.com/ByteDance-Seed/Depth-Anything-3/blob/main/LICENSE).
+Model weights are downloaded at runtime from Hugging Face under their own terms
+(see [Licensing](#licensing)).
 
 [Depth Anything 3](https://github.com/ByteDance-Seed/Depth-Anything-3) (ByteDance Seed) ·
 [Open3D](https://github.com/isl-org/Open3D) · [ezdxf](https://github.com/mozman/ezdxf) · [OpenCV](https://github.com/opencv/opencv)

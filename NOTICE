@@ -8,16 +8,24 @@ Apache License, Version 2.0 (see LICENSE).
 THIRD-PARTY COMPONENTS AND MODEL WEIGHTS
 ================================================================================
 
-This project is a pipeline. It does not vendor or redistribute any model
-weights; weights are downloaded by the user at runtime from their original
-hosts, under their original licenses. The license of this repository's CODE
-does NOT extend to those weights.
+This project VENDORS the Depth Anything 3 source code (Apache-2.0) under
+`depth_anything_3/`. That directory is an unmodified copy of upstream and
+carries its own LICENSE and VENDORED.md; see those files for provenance.
+
+This project does NOT vendor or redistribute any model weights; weights are
+downloaded by the user at runtime from their original hosts, under their
+original licenses. The license of this repository's CODE does NOT extend to
+those weights.
 
 --------------------------------------------------------------------------------
 Depth Anything 3 (DA3)  -  ByteDance Seed
   Repository: https://github.com/ByteDance-Seed/Depth-Anything-3
   Paper:      arXiv:2511.10647
   Code license: Apache License 2.0
+  Vendored at: depth_anything_3/  (unmodified copy of upstream
+               src/depth_anything_3/; full license text in
+               depth_anything_3/LICENSE, provenance in
+               depth_anything_3/VENDORED.md)
 
   MODEL WEIGHTS - LICENSES DIFFER BY CHECKPOINT. READ BEFORE COMMERCIAL USE:
 

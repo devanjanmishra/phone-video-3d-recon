@@ -5,11 +5,13 @@ Usage (Windows / anywhere):
     video2cad --video C:\\videos\\home.mp4 --workdir C:\\recon\\myhome
     python -m video2cad.cli --video home.mp4 --workdir out --stages frames,recon,cad
     python run.py --workdir out --stages cad               # re-run CAD only
+    video2cad --workdir out --stages viz              # generate GIFs only
 
 Stages:
     frames  video -> sharp keyframes                (CPU, fast)
     recon   DA3 -> poses + metric depth + fused PLY (GPU, minutes)
     cad     planes + mesh + DXF floor plan          (CPU, ~1-2 min)
+    viz     turntable + depth-montage GIFs           (CPU, ~30 s)
 """
 
 from __future__ import annotations
@@ -28,8 +30,8 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="Home video -> 3D point cloud -> rough CAD")
     ap.add_argument("--video", type=Path, help="input walkthrough video (mp4/mov/...)")
     ap.add_argument("--workdir", type=Path, required=True, help="output directory")
-    ap.add_argument("--stages", default="frames,recon,cad",
-                    help="comma list: frames,recon,cad")
+    ap.add_argument("--stages", default="frames,recon,cad,viz",
+                    help="comma list: frames,recon,cad,viz")
     # frames
     ap.add_argument("--target-frames", type=int, default=200)
     ap.add_argument("--long-edge", type=int, default=1008)
@@ -46,9 +48,13 @@ def main() -> int:
     ap.add_argument("--device", default="auto", help="auto | cuda | cpu")
     ap.add_argument("--dtype", default="auto",
                     help="auto | float16 | bfloat16 | float32 (Turing GPUs need float16)")
+    ap.add_argument("--process-res", type=int, default=504,
+                    help="DA3 internal processing resolution (lower = less VRAM, more frames)")
     # cad
     ap.add_argument("--slice-height", type=float, default=1.2,
                     help="floor-plan cut height above floor (m)")
+    ap.add_argument("--rescale-height", type=float, default=None,
+                    help="known floor-to-ceiling or door height (m) to rescale non-metric models")
     args = ap.parse_args()
 
     stages = [s.strip() for s in args.stages.split(",")]
@@ -89,6 +95,7 @@ def main() -> int:
             batch_limit=args.batch_limit,
             device_str=args.device,
             dtype_str=args.dtype,
+            process_res=args.process_res,
         )
         manifest["recon"] = {k: str(v) for k, v in res.items()}
 
@@ -99,11 +106,22 @@ def main() -> int:
             log.error("No fused_points.ply - run the 'recon' stage first.")
             return 1
         from video2cad.cad_stage import extract_cad
-        res = extract_cad(pcd, args.workdir / "cad", slice_height=args.slice_height)
+        res = extract_cad(pcd, args.workdir / "cad", slice_height=args.slice_height,
+                          rescale_height=args.rescale_height)
         manifest["cad"] = {k: str(v) for k, v in res.items() if v}
+
+    if "viz" in stages:
+        from video2cad.visualize import run_visualize
+        viz_res = run_visualize(args.workdir, mode="all")
+        manifest["viz"] = {k: str(v) for k, v in viz_res.items()}
 
     mpath.write_text(json.dumps(manifest, indent=2))
     log.info("Done. Manifest -> %s", mpath)
+
+    if "viz" in manifest:
+        print("\n=== Visualizations ===")
+        for k, v in manifest["viz"].items():
+            print(f"  {k:20s} {v}")
 
     if "cad" in manifest:
         print("\n=== Deliverables ===")

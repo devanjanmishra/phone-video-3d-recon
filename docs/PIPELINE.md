@@ -104,17 +104,36 @@ state), drift is bounded (every frame attends to every other — effectively *al
 pairs are loop closures*), and textureless walls are carried by the learned
 prior rather than by evidence.
 
-### Where explicit stitching does come back
+### Where explicit stitching does come back — batch mode
 
-Global attention is **O(N²) in frames**, so ~160 keyframes is the practical
-24 GB VRAM ceiling. Beyond that, DA3-Streaming processes overlapping sliding
-windows and *does* explicitly align consecutive windows — estimating a
-similarity transform (rotation, translation, **scale**) from the frames the
-windows share, chaining them into one map.
+Global attention is **O(N²) in frames**, so VRAM caps a single pass (~16 frames
+at 504px on a 16 GB fp32 card; ~160 on a 24 GB Ampere card at bf16). Past that,
+`--batch-limit` triggers `_infer_batched`, which is where this repo *does* do
+classical stitching:
 
-So: **within a window, stitching is implicit in attention; across windows, it's
-classical Sim(3) alignment on the overlap.** Any seam or scale jump in a
-whole-house capture appears at exactly those boundaries.
+1. Split keyframes into chunks with **50% overlap**.
+2. Run DA3 independently per chunk — each chunk gets its own world frame and,
+   with non-metric checkpoints, **its own arbitrary scale**.
+3. For each new chunk, back-project the overlap frames in both the previous
+   chunk's frame and the new one. The overlap frames are the *same images*, so
+   pixel (i,u,v) corresponds to pixel (i,u,v) — correspondence is free, no
+   feature matching needed.
+4. Solve **Umeyama / Sim(3)** on those point pairs for `(s, R, t)`.
+5. Apply it: `R_c2w ← R·R_c2w`, `t_c2w ← s·R·t_c2w + t`, and `depth ← s·depth`.
+   Scaling depth and the camera centre by the same `s` keeps intrinsics valid.
+
+**The correspondence is positional**, which is exactly why both sides must be
+masked *identically*. Filtering each chunk by its own valid-depth mask shifts
+every subsequent index — a single zero or NaN depth in one chunk silently
+corrupts the fit or crashes the solve. `_backproject_frames` therefore returns
+points *and* a mask without filtering, and `_compute_sim3_alignment` intersects
+the two masks before sampling.
+
+So: **within a chunk, stitching is implicit in attention; across chunks, it's
+classical Sim(3) on the overlap.** Any seam or scale jump appears at exactly
+those boundaries — and the logged `Sim3 alignment: scale=…` line is the first
+place to look. A scale far from 1.0 between chunks means the overlap was too
+small or too textureless to constrain the fit.
 
 ### Metric scale
 

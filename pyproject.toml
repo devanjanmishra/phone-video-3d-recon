@@ -27,28 +27,41 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Image Processing",
 ]
 
-# CPU stages only. The GPU stage needs torch + Depth-Anything-3 installed
-# separately (see README) because torch wheels are CUDA-version specific.
+# torch + torchvision + xformers are NOT listed here because their wheels are
+# CUDA-version specific. Install them first (see README), then `pip install -e .`.
 dependencies = [
     "numpy>=1.24",
     "opencv-python>=4.8",
     "open3d>=0.18",
     "ezdxf>=1.1",
+    # DA3 runtime deps (vendored from Depth-Anything-3)
+    "einops",
+    "huggingface_hub",
+    "imageio",
+    "omegaconf",
+    "pillow",
+    "safetensors",
+    "trimesh",
+    "plyfile",
+    "moviepy==1.0.3",
+    "pillow_heif",
+    "e3nn",
+    "matplotlib",
 ]
 
 [project.optional-dependencies]
 dev = ["pytest>=7", "ruff>=0.4"]
 
 [project.urls]
-Homepage = "https://github.com/devanjanmishra/video2cad"
-Repository = "https://github.com/devanjanmishra/video2cad"
-Issues = "https://github.com/devanjanmishra/video2cad/issues"
+Homepage = "https://github.com/devanjanmishra/phone-video-3d-recon"
+Repository = "https://github.com/devanjanmishra/phone-video-3d-recon"
+Issues = "https://github.com/devanjanmishra/phone-video-3d-recon/issues"
 
 [project.scripts]
 video2cad = "video2cad.cli:main"
 
 [tool.setuptools.packages.find]
-include = ["video2cad*"]
+include = ["video2cad*", "depth_anything_3*"]
 
 [tool.ruff]
 line-length = 100
