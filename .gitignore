@@ -29,6 +29,9 @@ manifest.json
 *.MOV
 *.insv
 
+# Keep the sample capture used in the README
+!data/home_interiors.mp4
+
 # Model weights / caches
 *.pt
 *.pth
