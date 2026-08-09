@@ -62,8 +62,10 @@ whole point of this project:
   so you can re-tune output without another GPU pass.
 - **Windows-first, compiler-free** — DA3 is vendored; everything installs from
   prebuilt wheels. A deliberate contrast to COLMAP-from-source or MASt3R-SLAM.
-- **Honesty as a feature** — a published limitations list and a real measured
-  accuracy method, which almost no repo in this space provides.
+- **GPU-aware auto-tuning** — `recommend.py` inspects your GPU and video and
+  prints the model, resolution, frame budget, and single-pass-vs-streaming
+  choice that will actually fit, plus a ready-to-run command. No trial-and-error
+  guessing at VRAM limits.
 
 A fuller comparison against VGGT, MapAnything, MASt3R-SLAM and COLMAP is in
 [docs/DESIGN.md](docs/DESIGN.md).
