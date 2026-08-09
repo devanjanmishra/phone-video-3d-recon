@@ -1,4 +1,4 @@
-# phone-video-3d-recon
+# video2cad
 
 **Turn a single handheld home walkthrough video into a metric 3D point cloud, segmented walls/floors, and a rough CAD floor plan (DXF). Offline, Windows-friendly, built on Depth Anything 3.**
 
@@ -6,16 +6,16 @@
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
 [![Weights](https://img.shields.io/badge/default%20weights-CC%20BY--NC-orange.svg)](#licensing)
 
-<!-- TODO: replace with real renders before making the repo public. Three images,
-     equal height, one row. This is the single highest-leverage thing in the repo. -->
-| Fused point cloud | Segmented planes | Floor plan (DXF) |
-|:---:|:---:|:---:|
-| ![fused cloud](examples/01_fused_cloud.png) | ![planes](examples/02_planes_colored.png) | ![dxf](examples/03_floor_plan_dxf.png) |
-| `recon/fused_points.ply` | `cad/planes_colored.ply` | `cad/house_plan.dxf` in FreeCAD |
+A real run — a phone walkthrough of a home interior, reconstructed and turned into a floor plan:
+
+| Reconstructed point cloud | Extracted floor plan |
+|:---:|:---:|
+| ![turntable](examples/turntable.gif) | ![floor plan](examples/floor_plan.png) |
+| DA3 metric point cloud, orbiting | `house_plan.dxf`, opens in AutoCAD / FreeCAD / LibreCAD |
+
+See [`examples/`](examples/) for the actual `house_plan.dxf` and `planes.json` from this capture.
 
 No depth sensor, no LiDAR, no turntable, no COLMAP. One phone video in, measurable geometry out.
-
-The Python package is `video2cad`; the repo is `phone-video-3d-recon`.
 
 ---
 
@@ -55,8 +55,8 @@ No ICP, no pose graph, no loop closure. See [docs/PIPELINE.md](docs/PIPELINE.md)
 Requires Python 3.10+ and an NVIDIA GPU (8 GB VRAM minimum, 16–24 GB comfortable).
 
 ```bash
-git clone https://github.com/devanjanmishra/phone-video-3d-recon
-cd phone-video-3d-recon
+git clone https://github.com/devanjanmishra/video2cad
+cd video2cad
 python -m venv .venv
 source .venv/bin/activate   # Windows: .venv\Scripts\activate
 
@@ -93,19 +93,22 @@ This prints the optimal model, resolution, batch size, and a ready-to-run comman
 python run_single.py home.mp4 out_single --rescale-height 2.1
 python run_single.py home.mp4 out_single --low-res --rescale-height 2.1
 
-# Batch mode (unlimited frames — processes overlapping chunks, aligns with Sim3)
-python run_batch.py home.mp4 out_batch --rescale-height 2.1
-python run_batch.py home.mp4 out_batch --high-model --rescale-height 2.1
-python run_batch.py home.mp4 out_batch --target-frames 200 --rescale-height 2.1
+# Streaming mode (recommended for long videos; upstream DA3-Streaming)
+python run_streaming.py home.mp4 out_stream --chunk-size 10 --process-res 336 --no-loop --rescale-height 2.1
 ```
 
 ### Direct CLI
 
 ```bash
-# Full run (auto-batches if frames > batch-limit)
+# Single-pass run (short captures only)
 video2cad --video home.mp4 --workdir output \
   --model depth-anything/DA3-SMALL \
-  --target-frames 120 --batch-limit 16 --process-res 336 \
+  --target-frames 16 --max-frames 16 --process-res 336 \
+  --rescale-height 2.1
+
+# Long capture (DA3-Streaming)
+video2cad --video home.mp4 --workdir output --stages frames,stream,cad,viz \
+  --target-frames 300 --chunk-size 10 --process-res 336 --no-loop \
   --rescale-height 2.1
 
 # Re-tune CAD only, no GPU rerun
@@ -117,47 +120,75 @@ video2cad --workdir output --stages viz
 
 Outputs in `<workdir>`: `recon/fused_points.ply`, `cad/aligned_points.ply`,
 `cad/planes_colored.ply`, `cad/planes.json`, `cad/mesh.obj|.stl`, `cad/house_plan.dxf`,
-`viz/turntable.gif`, `viz/depth_montage.gif`.
+`viz/turntable.gif`, and, for non-streaming runs, `viz/depth_montage.gif`.
 
-> The `viz` stage renders offscreen via Open3D. On a headless Linux box this
-> needs an EGL-capable Open3D build; if it fails the stage logs the error and
-> the rest of the pipeline still completes. It works out of the box on Windows.
+### Streaming mode
+
+`run_streaming.py` uses the upstream DA3-Streaming implementation for long captures.
+It is **not committed to this repo** (the `Depth-Anything-3/` tree is git-ignored,
+because it is large and its loop-closure component SALAD is GPL-3.0 — see
+[Licensing](#licensing)). So a fresh clone must fetch it once:
+
+```bash
+# 1. fetch DA3-Streaming WITH submodules, next to this repo or anywhere
+git clone --recursive https://github.com/ByteDance-Seed/Depth-Anything-3
+
+# 2. point video2cad at its da3_streaming/ folder (or place it at ./Depth-Anything-3/da3_streaming)
+export DA3_STREAMING_DIR=/abs/path/to/Depth-Anything-3/da3_streaming   # Linux/mac
+#   set DA3_STREAMING_DIR=C:\path\to\Depth-Anything-3\da3_streaming    # Windows
+
+# 3. install streaming deps + its weights
+uv pip install --python .venv/bin/python -e '.[streaming]'
+cd "$DA3_STREAMING_DIR" && bash scripts/download_weights.sh && cd -
+
+# 4. run
+python run_streaming.py home.mp4 out_stream --target-frames 300 --chunk-size 10 --process-res 336 --no-loop --rescale-height 2.1
+```
+
+If you keep DA3-Streaming at `./Depth-Anything-3/da3_streaming` (the default search
+path), you can skip `DA3_STREAMING_DIR`; `run_streaming.py` finds it there
+automatically. Pass `--streaming-dir` to override per run.
+
+Use `--no-loop` unless the download supplied `dino_salad.ckpt`. For loop closure,
+omit that flag. A 10-frame chunk at `--process-res 336` is the conservative starting
+point for a 16 GB GPU. Increase either setting only when it fits, and reduce them
+further if CUDA runs out of memory.
 
 ### Key flags
 
 | Flag | Effect |
 |---|---|
 | `--target-frames` | more = denser and slower; 60–120 for a room, 150–250 for a flat |
-| `--batch-limit` | frames per forward pass; set below VRAM limit, auto-batches the rest |
+| `--max-frames` | maximum keyframes allowed for the single-pass path; use streaming above this limit |
 | `--process-res` | DA3 internal resolution (504/378/336); lower = less VRAM, more frames |
-| `--rescale-height` | known height in meters (door 2.1, ceiling 2.7). **Required for every checkpoint except the NESTED ones** - without it the DXF is not in meters. |
+| `--rescale-height` | known height in meters (door=2.1, ceiling=2.7) for non-metric models |
 | `--conf-percentile` | raise (e.g. 55) to drop noisy geometry, at density cost |
 | `--voxel` | 0.005 for fine detail, 0.02 for lighter CAD-oriented clouds |
 | `--max-depth` | clip window/mirror hallucinations (default 12 m) |
 | `--slice-height` | floor-plan cut height above floor (default 1.2 m) |
-| `--model` | CLI default is `DA3NESTED-GIANT-LARGE-1.1` (metric, needs ~24 GB). The `run_single.py` / `run_batch.py` wrappers default to `DA3-SMALL` instead, because that is what fits 16 GB. Also `DA3-LARGE-1.1`, `DA3-BASE`. |
+| `--model` | `DA3-SMALL` (default), `DA3-LARGE-1.1`, `DA3-BASE`, or `DA3NESTED-GIANT-LARGE-1.1` |
 
-### VRAM limits (tested on V100 16GB, fp32)
+### Single-pass VRAM limits (tested on V100 16GB, fp32)
 
-| Model | `--process-res` | Max `--batch-limit` | Quality |
+| Model | `--process-res` | Max `--max-frames` | Quality |
 |---|---|---|---|
 | DA3-SMALL | 504 | 16 | Sharpest per-frame |
 | DA3-SMALL | 378 | 32 | Good balance |
-| **DA3-SMALL** | **336** | **40** | **Best for batched mode** |
+| **DA3-SMALL** | **336** | **40** | Highest single-pass coverage |
 | DA3-LARGE | 504 | 8 | Best depth quality |
 | DA3-LARGE | 336 | 20 | Large model + batch |
 
 > **Ampere+ GPUs (RTX 30xx/40xx/A100)** use bf16, roughly doubling these limits.
 > A 24 GB RTX 4090 can do ~80 frames at 504px with DA3-LARGE in one pass.
 
-### Single-pass vs Batch mode
+### Reconstruction paths
 
-| | Single pass | Batch mode |
+| | Single pass | Streaming |
 |---|---|---|
 | **Frames** | Limited by VRAM | Unlimited |
-| **Quality** | Best — global attention sees all frames | Good — Sim(3) alignment at chunk boundaries |
-| **When to use** | Short videos, high VRAM | Long videos, limited VRAM |
-| **Seams** | None | Possible at chunk boundaries |
+| **Quality** | Best when every selected frame fits at once | Upstream chunk alignment and optional loop closure for long sequences |
+| **When to use** | Short videos, high VRAM | Long / whole-home captures or anything above the single-pass limit |
+| **Setup** | Base dependencies | Extra weights and `.[streaming]` dependencies |
 
 ### Tested configurations (20s portrait home video, V100 16GB)
 
@@ -166,9 +197,10 @@ Outputs in `<workdir>`: `recon/fused_points.ply`, `cad/aligned_points.ply`,
 | DA3-LARGE, 504px, single 8fr | 8 | 15,839 | 0 | 0.6×1.2m | No |
 | DA3-SMALL, 504px, single 16fr | 16 | 64,968 | 3 | 1.5×1.7m | No |
 | DA3-SMALL, 336px, single 40fr | 40 | 36,176 | 5 | 4.8×6.0m | Yes |
-| **DA3-SMALL, 336px, batch 60fr** | **60** | **103,229** | **9** | — | **Yes** |
+| **DA3-Streaming, 336px, 10fr chunks** | **300** | **415,670** | **14** | — | **Yes** |
 
-More frames = more coverage = better geometry. Batch mode removes the VRAM ceiling.
+More frames increase coverage. Use DA3-Streaming for any capture that does not fit
+in one forward pass.
 
 ## Rough-CAD workflow
 
@@ -193,17 +225,27 @@ Accuracy lives or dies here. See [docs/CAPTURE.md](docs/CAPTURE.md) for the long
      measured number here is worth more than any benchmark citation, and almost
      nobody in this space publishes one. -->
 
-Measured against a tape on a real capture:
+Values below are read from the committed [`examples/planes.json`](examples/planes.json)
+(a real home-interior capture). The **ground-truth column still needs a tape measure** —
+that is the one number that turns this from a demo into a validated tool, and it's
+left blank deliberately rather than guessed.
 
 | Feature | Ground truth | `planes.json` | Error |
 |---|---|---|---|
-| Living room wall, long | _TBD_ m | _TBD_ m | _TBD_ |
-| Living room wall, short | _TBD_ m | _TBD_ m | _TBD_ |
-| Floor-to-ceiling height | _TBD_ m | _TBD_ m | _TBD_ |
+| Longest wall run | _measure_ m | 6.01 m | _TBD_ |
+| Room footprint (largest floor bbox) | _measure_ m | 6.24 × 5.52 m | _TBD_ |
+| Floor-to-ceiling height (median of 14 walls) | _measure_ m | 2.14 m | _TBD_ |
 
-Method: measure with a tape, compare against `extent_m` of the corresponding
-plane in `cad/planes.json`. Capture and model checkpoint used are listed with
-the numbers, since scale accuracy depends on both.
+**Internal consistency check** (needs no tape): the floor-to-ceiling height,
+estimated independently from all 14 wall planes, lands at 2.09–2.30 m with a
+median of 2.14 m. A typical Indian apartment ceiling is ~2.7 m and a low one
+~2.4 m, so this run reads a bit low — consistent with the DA3 checkpoint used
+being up-to-scale rather than the metric NESTED one. Pass `--rescale-height` with
+a known height to correct it before trusting absolute dimensions.
+
+Method: measure one wall with a tape, compare against `extent_m` of the
+corresponding plane in `cad/planes.json`. List the capture and model checkpoint
+with the numbers, since scale accuracy depends on both.
 
 > Metric scale comes **only** from the nested checkpoint
 > (`DA3NESTED-GIANT-LARGE-1.1`). With any other checkpoint the reconstruction is
@@ -230,9 +272,13 @@ Read this before commercial use — **the code license and the weights license a
 
 - **This repository's code: Apache-2.0.** Free for commercial use, with an explicit patent grant.
 - **The default checkpoint (`DA3NESTED-GIANT-LARGE-1.1`): CC BY-NC 4.0 — non-commercial only.** It is the default because it is the only one giving true metric scale. Apache-2.0 code does **not** launder a non-commercial weights license.
-- **`DA3-SMALL` / `DA3-BASE` are Apache-2.0** and are what the wrapper scripts use by default, so the common path here is already commercial-safe. Confirm on the model card before relying on it.
 - **For commercial use**, pass an Apache-2.0 checkpoint: `--model depth-anything/DA3-BASE`. You lose accuracy and absolute metric scale. `MapAnything` is the alternative worth evaluating: permissive weights *and* metric.
-- **DA3 source code is vendored** in `depth_anything_3/` (Apache-2.0, unmodified, license included there). No model *weights* are vendored; they are fetched at runtime from their original hosts under their original terms. Verify the current license on the model card yourself — they can change independently of this project.
+- No weights are vendored or redistributed here; they are fetched at runtime from their original hosts under their original terms. Verify the current license on the model card yourself — they can change independently of this project.
+
+**Vendored source code:**
+- `depth_anything_3/` — DA3 core, **Apache-2.0**, committed to this repo (unmodified upstream, license retained).
+- `Depth-Anything-3/da3_streaming/` — DA3-Streaming, **Apache-2.0**, **not committed** (git-ignored; fetch it yourself per [Streaming mode](#streaming-mode)).
+- SALAD, the loop-closure descriptor bundled inside DA3-Streaming, is **GPL-3.0**. This is why DA3-Streaming is kept out of the committed tree: shipping GPL code inside an Apache-2.0 distribution would create a copyleft conflict. SALAD is only used by the optional loop-closure path — run streaming with `--no-loop` and it is never imported. If you choose to redistribute a tree that includes SALAD, treat that combined work as GPL-3.0.
 
 See [NOTICE](NOTICE) for the full third-party breakdown.
 

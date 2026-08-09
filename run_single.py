@@ -22,39 +22,22 @@ def main():
     ap.add_argument("workdir", help="Output directory")
     ap.add_argument("--model", default="depth-anything/DA3-SMALL",
                     help="DA3 model (default: DA3-SMALL)")
-    ap.add_argument("--target-frames", type=int, default=None,
-                    help="Keyframes to extract (default: as many as fit in one "
-                         "pass - 16 at 504px, 40 at 336px)")
+    ap.add_argument("--target-frames", type=int, default=60,
+                    help="Number of keyframes to extract (default: 60)")
     ap.add_argument("--low-res", action="store_true",
                     help="Use 336px resolution (fits more frames, lower detail)")
-    ap.add_argument("--process-res", type=int, default=None,
-                    help="Override DA3 processing resolution")
     ap.add_argument("--rescale-height", type=float, default=None,
                     help="Known floor-to-ceiling or door height (m) for non-metric models")
 
     args = ap.parse_args()
 
-    # Resolution presets: `vram_ceiling` is the frame count that fits in one
-    # forward pass on a 16 GB fp32 GPU at this resolution.
+    # Resolution presets
     if args.low_res:
-        process_res, vram_ceiling = 336, 40
+        process_res = 336
+        max_frames = 40
     else:
-        process_res, vram_ceiling = 504, 16
-    if args.process_res:
-        process_res = args.process_res
-    if args.target_frames is None:
-        args.target_frames = vram_ceiling
-
-    # Single-pass means EVERY frame in ONE forward pass. batch_limit must
-    # therefore be >= target_frames, or video2cad silently switches to chunked
-    # mode and this script stops doing what its name says.
-    batch_limit = args.target_frames
-    if args.target_frames > vram_ceiling:
-        print(f"  ! {args.target_frames} frames at {process_res}px exceeds the "
-              f"~{vram_ceiling}-frame ceiling for a 16 GB fp32 GPU.")
-        print(f"  ! Single-pass will still be attempted and may OOM. For more "
-              f"frames use: python run_batch.py {args.video} {args.workdir}")
-        print()
+        process_res = 504
+        max_frames = 16
 
     # Build command
     cmd = [
@@ -63,7 +46,7 @@ def main():
         "--workdir", args.workdir,
         "--model", args.model,
         "--target-frames", str(args.target_frames),
-        "--batch-limit", str(batch_limit),
+        "--max-frames", str(max_frames),
         "--process-res", str(process_res),
     ]
     if args.rescale_height is not None:
@@ -71,8 +54,7 @@ def main():
 
     print(f"=== Single-pass mode ===")
     print(f"  Model:         {args.model}")
-    print(f"  Target frames: {args.target_frames} (all in one pass; "
-          f"~{vram_ceiling} fits 16 GB fp32)")
+    print(f"  Target frames: {args.target_frames} (max {max_frames} in one pass)")
     print(f"  Resolution:    {process_res}px")
     print(f"  Rescale:       {args.rescale_height or 'none'}")
     print(f"  Command:       {' '.join(cmd)}")

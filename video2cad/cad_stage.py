@@ -44,36 +44,32 @@ def extract_cad(
     log.info("Loaded %d points", len(pcd.points))
 
     # 1. gravity alignment ---------------------------------------------------
-    # The cloud may still be in arbitrary units here (non-metric checkpoints), so
-    # a fixed metric threshold would be meaningless. Use one relative to the
-    # cloud's own size, which is scale-invariant.
-    diag = float(np.linalg.norm(
-        pcd.get_axis_aligned_bounding_box().get_extent()
-    ))
-    pcd, T_align = _align_to_gravity(pcd, max(1e-6, 0.003 * diag))
+    pcd, T_align = _align_to_gravity(pcd, plane_dist_thresh)
 
     # 1b. rescale if a known height is provided (non-metric models) -----------
-    # After this block the cloud is in TRUE METERS, so the metric thresholds
-    # (plane_dist_thresh, grid_res, slice_*) apply as-is and must NOT be scaled.
     scale = 1.0
     if rescale_height is not None:
-        pts = np.asarray(pcd.points).copy()
-        raw_height = np.percentile(pts[:, 2], 98) - np.percentile(pts[:, 2], 2)
-        if raw_height > 1e-6:
+        pts = np.asarray(pcd.points)
+        z_floor = np.percentile(pts[:, 2], 2)
+        z_ceil = np.percentile(pts[:, 2], 98)
+        raw_height = z_ceil - z_floor
+        if raw_height > 0.01:
             scale = rescale_height / raw_height
             log.info(
-                "Rescaling: raw height=%.4f units -> %.3f m (scale=%.4f)",
+                "Rescaling: raw height=%.3fm -> %.3fm (scale=%.4f)",
                 raw_height, rescale_height, scale,
             )
             pts *= scale
-            pts[:, 2] -= np.percentile(pts[:, 2], 2)  # re-zero the floor
             pcd.points = o3d.utility.Vector3dVector(pts)
+            # Re-zero the floor
+            z_min = np.percentile(pts[:, 2], 2)
+            pts[:, 2] -= z_min
+            pcd.points = o3d.utility.Vector3dVector(pts)
+            # Scale distance thresholds proportionally
+            plane_dist_thresh *= scale
+            min_plane_points = max(500, int(min_plane_points / scale))
         else:
-            log.warning(
-                "Cannot rescale: measured height=%.6f units is degenerate. "
-                "The cloud is probably too sparse or has no vertical extent.",
-                raw_height,
-            )
+            log.warning("Cannot rescale: raw height=%.4fm too small", raw_height)
 
     np.savetxt(out_dir / "alignment_T.txt", T_align)
     aligned_path = out_dir / "aligned_points.ply"
@@ -208,6 +204,15 @@ def _segment_planes(pcd, dist, min_pts, max_planes, out_dir):
 
 def _poisson_mesh(pcd, out_dir):
     import open3d as o3d
+
+    if not pcd.has_normals():
+        extent = pcd.get_axis_aligned_bounding_box().get_extent()
+        radius = max(0.02, 0.01 * float(np.linalg.norm(extent)))
+        log.info("Cloud has no normals; estimating them for Poisson meshing.")
+        pcd.estimate_normals(
+            o3d.geometry.KDTreeSearchParamHybrid(radius=radius, max_nn=30)
+        )
+        pcd.orient_normals_consistent_tangent_plane(20)
 
     log.info("Poisson meshing (depth=10)...")
     mesh, dens = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(pcd, depth=10)

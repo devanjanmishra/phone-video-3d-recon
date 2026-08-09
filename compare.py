@@ -2,7 +2,7 @@
 compare.py — Compare quality of multiple video2cad runs side by side.
 
 Usage:
-    python compare.py out_full out_full_hq out_batched
+    python compare.py out_full out_full_hq out_stream
     python compare.py out_*
 """
 
@@ -154,15 +154,13 @@ def print_comparison(runs: list[dict]):
     # Score (simple heuristic)
     print(f"  {'Quality score':24s}", end="")
     for r in runs:
-        # Heuristic, weights chosen to total exactly 100:
-        #   walls 30 | coverage 25 | DXF 15 | density 15 | height consistency 10 | floor 5
         score = (
-            min(r["n_walls"] / 10, 1.0) * 30 +
-            min(r["plane_coverage"], 1.0) * 25 +
-            (15 if r["has_dxf"] else 0) +
-            min(r["total_points"] / 200_000, 1.0) * 15 +
-            (10 if 0 < r["wall_height_std"] < 0.2 else 0) +
-            min(r["n_floors"], 1) * 5
+            min(r["n_walls"], 10) * 10 +          # more walls = better (cap 10)
+            min(r["plane_coverage"], 1.0) * 30 +   # higher coverage = better
+            (20 if r["has_dxf"] else 0) +           # DXF generated
+            min(r["total_points"] / 10000, 20) +   # more points (cap 200k)
+            (10 if r["wall_height_std"] < 0.2 else 0) +  # consistent wall heights
+            min(r["n_floors"], 2) * 5              # floor detection
         )
         print(f"{score:>{col_w}.0f}", end="")
     print(" / 100")

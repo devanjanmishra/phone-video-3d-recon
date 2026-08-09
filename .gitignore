@@ -43,6 +43,8 @@ huggingface/
 !examples/**/*.png
 !examples/**/*.jpg
 !examples/**/planes.json
+!examples/**/*.gif
+!examples/**/*.dxf
 
 # ---------------------------------------------------------------------------
 # Python

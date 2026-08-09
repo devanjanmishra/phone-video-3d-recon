@@ -136,14 +136,8 @@ def depth_montage_gif(
     panels: list[Image.Image] = []
     for idx in indices:
         # Load the actual frame image used by DA3
-        img_path = Path(str(image_paths[idx]))
-        frame = cv2.imread(str(img_path))
-        if frame is None and frames_dir is not None:
-            # recon.npz records absolute paths; they break if the workdir was
-            # moved or produced on another machine. Retry by filename.
-            alt = Path(frames_dir) / img_path.name
-            if alt.exists():
-                frame = cv2.imread(str(alt))
+        img_path = str(image_paths[idx])
+        frame = cv2.imread(img_path)
         if frame is None:
             log.warning("Cannot read frame %s, skipping", img_path)
             continue

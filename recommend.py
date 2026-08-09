@@ -1,6 +1,5 @@
 """
-recommend.py — Recommend optimal model, resolution, and batch size based on
-your GPU and video.
+recommend.py — Recommend single-pass or streaming reconstruction settings.
 
 Usage:
     python recommend.py                          # just check GPU
@@ -63,25 +62,25 @@ def recommend(vram_gb: float, cc_major: int, video_info: dict | None) -> dict:
     if effective_vram >= 48:
         model = "DA3NESTED-GIANT-LARGE-1.1"
         process_res = 504
-        base_batch = 80
+        max_frames = 80
         metric = True
     elif effective_vram >= 24:
         model = "DA3-LARGE-1.1"
         process_res = 504
-        base_batch = int(16 * scale)
+        max_frames = int(16 * scale)
         metric = False
     elif effective_vram >= 12:
         model = "DA3-SMALL"
         process_res = 336
-        base_batch = int(40 * scale)
+        max_frames = int(40 * scale)
         metric = False
     else:
         model = "DA3-SMALL"
         process_res = 336
-        base_batch = max(4, int(40 * scale))
+        max_frames = max(4, int(40 * scale))
         metric = False
 
-    batch_limit = max(4, min(base_batch, 160))
+    max_frames = max(4, min(max_frames, 160))
 
     # Target frames based on video duration
     if video_info and video_info.get("duration_s", 0) > 0:
@@ -91,13 +90,13 @@ def recommend(vram_gb: float, cc_major: int, video_info: dict | None) -> dict:
     else:
         target_frames = 120
 
-    # Mode: single if target_frames <= batch_limit, else batched
-    mode = "single" if target_frames <= batch_limit else "batch"
+    mode = "single" if target_frames <= max_frames else "stream"
 
     return {
         "model": f"depth-anything/{model}",
         "process_res": process_res,
-        "batch_limit": batch_limit,
+        "max_frames": max_frames,
+        "stream_chunk_size": 10 if cc_major < 8 and vram_gb < 20 else 20,
         "target_frames": target_frames,
         "mode": mode,
         "metric": metric,
@@ -113,7 +112,7 @@ def main():
 
     # GPU info
     gpu_name, vram_gb, cc_major = get_gpu_info()
-    if args.vram is not None:
+    if args.vram:
         vram_gb = args.vram
 
     print("=" * 60)
@@ -148,50 +147,58 @@ def main():
     print("  RECOMMENDATION")
     print("-" * 60)
     print()
-    print(f"  Mode:          {rec['mode']} pass" +
+    print(f"  Mode:          {rec['mode']}" +
           (" (frames fit in one chunk)" if rec['mode'] == 'single'
-           else " (overlapping chunks)"))
+           else " (DA3-Streaming chunks)"))
     print(f"  Model:         {rec['model']}")
     print(f"  Resolution:    {rec['process_res']}px")
-    print(f"  Batch limit:   {rec['batch_limit']} frames/chunk")
+    print(f"  Single-pass limit: {rec['max_frames']} frames")
     print(f"  Target frames: {rec['target_frames']}")
     print(f"  Metric scale:  {'yes' if rec['metric'] else 'no — use --rescale-height'}")
     print()
 
     # Build command
-    script = "run_single.py" if rec["mode"] == "single" else "run_batch.py"
+    script = "run_single.py" if rec["mode"] == "single" else "run_streaming.py"
     video_arg = args.video or "<your_video.mp4>"
-    # Always pass batch-limit and process-res explicitly: the wrapper presets
-    # would otherwise override the numbers computed for THIS GPU.
     cmd_parts = [
         f"python {script} {video_arg} output",
-        f"--model {rec['model']}",
         f"--target-frames {rec['target_frames']}",
-        f"--batch-limit {rec['batch_limit']}",
-        f"--process-res {rec['process_res']}",
     ]
+    if rec["mode"] == "stream":
+        cmd_parts.extend((
+            f"--chunk-size {rec['stream_chunk_size']}",
+            "--process-res 336",
+            "--no-loop",
+        ))
+    else:
+        cmd_parts.append(f"--model {rec['model']}")
+    if rec["mode"] == "single" and rec["process_res"] != 504:
+        cmd_parts.append("--low-res")
     if rec["needs_rescale"]:
-        cmd_parts.append("--rescale-height 2.1")
+        cmd_parts.append("--rescale-height 2.1  # ← set to your door/ceiling height in meters")
 
     print("  Suggested command:")
     print()
     print(f"    {' '.join(cmd_parts)}")
-    if rec["needs_rescale"]:
-        print()
-        print("    ^ replace 2.1 with a height you can actually measure "
-              "(door ~2.1 m, ceiling ~2.7 m).")
     print()
 
-    # Also show the direct CLI equivalent
-    cli_parts = [
-        "video2cad",
-        f"--video {video_arg}",
-        "--workdir output",
-        f"--model {rec['model']}",
-        f"--target-frames {rec['target_frames']}",
-        f"--batch-limit {rec['batch_limit']}",
-        f"--process-res {rec['process_res']}",
-    ]
+    # Also show the direct CLI equivalent.
+    cli_parts = ["video2cad", f"--video {video_arg}", "--workdir output"]
+    if rec["mode"] == "stream":
+        cli_parts.extend((
+            "--stages frames,stream,cad,viz",
+            f"--target-frames {rec['target_frames']}",
+            f"--chunk-size {rec['stream_chunk_size']}",
+            "--process-res 336",
+            "--no-loop",
+        ))
+    else:
+        cli_parts.extend((
+            f"--model {rec['model']}",
+            f"--target-frames {rec['target_frames']}",
+            f"--max-frames {rec['max_frames']}",
+            f"--process-res {rec['process_res']}",
+        ))
     if rec["needs_rescale"]:
         cli_parts.append("--rescale-height 2.1")
     print("  Or directly:")

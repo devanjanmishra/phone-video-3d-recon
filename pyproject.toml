@@ -51,6 +51,13 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=7", "ruff>=0.4"]
+streaming = [
+    "faiss-cpu",
+    "numba",
+    "pandas",
+    "prettytable",
+    "pypose",
+]
 
 [project.urls]
 Homepage = "https://github.com/devanjanmishra/phone-video-3d-recon"

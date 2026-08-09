@@ -1,176 +1,99 @@
-# Integration notes
+# Integration notes — streaming-only upload
 
-Review of the uploaded changes before merging into
-`github.com/devanjanmishra/phone-video-3d-recon`. Everything below was verified
-by running it, not by reading it.
+Reconciling the working `video2cad-streaming-only` upload against the GitHub
+repo (`phone-video-3d-recon`). The upload is the authoritative working code;
+this round is integration only — no logic was changed. Everything below was
+verified by running it.
 
-## Bugs found and fixed
+## What the upload is
 
-### 1. Batch mode crashed on a single bad depth pixel — **blocker**
+A complete, working tree where the `stream` stage is functional. It supersedes
+the previous scaffold: it vendors the **full DA3-Streaming implementation** (with
+SALAD, the fastloop C++/Python Sim3 solver, and configs) under
+`Depth-Anything-3/`, and ships a cleaner rewrite of `streaming_stage.py` that I
+took as ground truth.
 
-`_compute_sim3_alignment` back-projected each chunk's overlap frames through
-`_backproject_frames`, which filtered by that chunk's own `(d > 0) & isfinite(d)`
-mask. Umeyama needs *index-aligned* correspondences, so filtering each side
-independently means:
+Verified end-to-end against a faithful mock of the DA3-Streaming binary (no GPU
+or weights here): keyframe staging → derived config → subprocess launch →
+`combined_pcd.ply` normalized to `recon/fused_points.ply` → CAD recovers 4 walls
+/ 1 floor / 1 ceiling with correct extents and a valid DXF. The upload's
+`streaming_stage.py` also makes weight paths absolute in the derived config,
+which the previous version did not — a real improvement, kept as-is.
 
-- lengths differ → `ValueError` in the matmul (cryptic, mid-run, after minutes
-  of GPU work), or
-- lengths coincidentally match → correspondence silently shifts and the fitted
-  `(s, R, t)` is garbage, welding the next chunk on at the wrong scale/pose.
+## What changed between GitHub and the upload
 
-Reproduced:
+| File | Status | Action |
+|---|---|---|
+| `video2cad/streaming_stage.py`, `run_streaming.py` | new, working | kept |
+| `Depth-Anything-3/` (DA3-Streaming + SALAD) | new, vendored | kept **but git-ignored** (see licensing) |
+| `depth_anything_3/` core | present, Apache | kept, committed |
+| `da3_stage.py`, `cli.py`, `cad_stage.py`, `visualize.py`, wrappers, README | edited | kept as uploaded |
+| `run_batch.py` | **removed** in upload | left removed (you said batch goes later; the upload already did it) |
+| `docs/INTEGRATION_NOTES.md` (old) | dropped in upload | replaced by this file |
+| `home_interiors.mp4` | dropped in upload | left out — a 22 MB video doesn't belong in the source tree |
 
-```
-clean case                       → scale 0.5000 (truth 0.5)   OK
-ONE zero-depth pixel in chunk B  → ValueError: size 2303 != 2304
-whole frame invalid in chunk A   → ValueError: size 2304 != 1536
-```
+## Integration fixes applied (no logic touched)
 
-Fixed by returning points *plus* a validity mask without filtering, then
-intersecting the masks before sampling. All three cases now recover 0.500000
-exactly. Added a floor of 100 jointly-valid pixels with a clear error, and a
-warning when the fitted scale lands outside 0.1–10.
+1. **`pyproject.toml` URLs** pointed at `/video2cad` again (a regression). Fixed
+   to `/phone-video-3d-recon` (Homepage / Repository / Issues).
 
-The Umeyama math itself was correct — verified independently.
+2. **NOTICE was stale and wrong on a license-critical point.** It still claimed
+   the project vendors nothing, while the upload vendors three source trees.
+   Rewrote it to map each vendored tree to its license, and added a prominent
+   **GPL-3.0 warning for SALAD** (see below).
 
-### 2. `--rescale-height` corrupted dimensions by ~12%
+3. **License files for vendored trees.** `depth_anything_3/` already had its
+   Apache `LICENSE`; added the Apache `LICENSE` to the `Depth-Anything-3/` tree
+   too. SALAD's GPL `LICENSE` was already present and is retained.
 
-After rescaling the cloud to true meters, the code did:
+4. **Stray VCS metadata removed.** `Depth-Anything-3/.../salad/.git` was a
+   dangling gitlink (`gitdir: ../../../.git/modules/...`) that would break a
+   fresh commit. Removed, along with nested `.gitignore` files in vendored trees.
 
-```python
-plane_dist_thresh *= scale
-min_plane_points = max(500, int(min_plane_points / scale))
-```
+5. **README streaming setup corrected.** It said "this workspace already includes
+   [DA3-Streaming] at `Depth-Anything-3/da3_streaming`" — true for your local
+   copy, but **false for a fresh clone**, because that path is git-ignored.
+   Rewrote the setup to show the one-time `git clone --recursive` +
+   `DA3_STREAMING_DIR` step, and added a source-code licensing block covering the
+   SALAD GPL boundary.
 
-Both are wrong. Once rescaled, the cloud **is** in meters, so the 2 cm RANSAC
-threshold applies as-is; multiplying it by `scale` re-breaks what the rescale
-just fixed. And `min_plane_points` is a *count* — scaling coordinates neither
-creates nor destroys points, so dividing it by `scale` is dimensionally
-meaningless (with `scale=10` it silently dropped the threshold 4000 → 400).
+## The SALAD / GPL-3.0 situation — the one thing that mattered most
 
-Separately, `_align_to_gravity` ran *before* the rescale using a metric
-threshold on a cloud that was still in arbitrary units.
+SALAD (the DINOv2-based place-recognition descriptor that DA3-Streaming uses for
+loop closure) is **GPL-3.0**, a strong copyleft license. Vendoring it into an
+Apache-2.0 repo and distributing the combined work would create a licensing
+conflict.
 
-Measured on a synthetic 4×5×2.6 m room fed in at 10× too small, with
-`--rescale-height 2.6`:
+**This is already handled correctly by the upload's `.gitignore`**, which
+excludes the entire `Depth-Anything-3/` tree. Confirmed by simulation: a commit
+of this tree includes the Apache `depth_anything_3/` core (95 files) and **zero**
+SALAD or `Depth-Anything-3/` files. So SALAD lives only in your local working
+copy for running the pipeline; it is not part of your distributed, Apache-2.0
+repo. A fresh clone fetches DA3-Streaming separately (`git clone --recursive`),
+so the GPL code enters the *user's* tree, not your distribution.
 
-| | 4 m walls recovered |
-|---|---|
-| before | 3.48, 3.56 (≈12% error) |
-| after | 3.94, 3.95 |
-| truth | 4.00, 4.00 |
+SALAD is only reached by the optional loop-closure path. `--no-loop` never
+imports it. If you ever decide to commit `Depth-Anything-3/`, you must treat the
+whole distributed work as GPL-3.0 and stop advertising the repo as Apache-2.0.
 
-Fixed: gravity alignment now uses a threshold relative to the cloud's bbox
-diagonal (scale-invariant), and the metric thresholds are left alone after
-rescaling. Output is now identical whether the input cloud arrives at 0.02×,
-0.1×, 1× or 7× — verified across all four.
+## What lands on GitHub
 
-The residual ~1.5% under-measure is inherent (corner points get claimed by the
-perpendicular wall's RANSAC), not a bug.
+First-party code + docs + the Apache `depth_anything_3/` core (95 files).
+**Excluded** by `.gitignore`: `Depth-Anything-3/` (53 MB, includes GPL SALAD),
+`uv.lock`, `*.mp4`, reconstruction outputs. The provided zip already omits the
+git-ignored `Depth-Anything-3/` tree, so it mirrors what a clean commit contains.
 
-### 3. `run_single.py` was not single-pass
+## Decisions left to you
 
-Defaults were `--target-frames 60` with `batch_limit` forced to 16 (or 40 with
-`--low-res`). Since `video2cad` batches whenever `frames > batch_limit`, the
-script that exists specifically to do a single forward pass was silently
-chunking — so "single vs batch" comparisons were really batch vs batch.
+1. **`run_batch.py` is gone.** You said batch removal was for later, but the
+   upload already removed it and the CLI/wrappers no longer reference it. Left as
+   removed. If you wanted to keep batch one more cycle, restore it from git
+   history — but nothing depends on it now.
 
-Fixed: `batch_limit` now follows `target_frames`, and `--target-frames` defaults
-to what actually fits (16 at 504px, 40 at 336px), matching the README's tested
-table. Asking for more prints an explicit OOM warning and points at
-`run_batch.py`. Added `--process-res` for parity with `run_batch.py`.
+2. **`uv.lock` stays uncommitted** (git-ignored in the upload). For an
+   application, committing the lock is the more common choice for reproducibility.
+   Your call; I did not change the `.gitignore` rule.
 
-### 4. `compare.py` quality score exceeded its own maximum
-
-`min(n_walls, 10) * 10` alone reaches 100, before the other five terms, all
-printed as `/ 100`. Reweighted to sum to exactly 100
-(walls 30, coverage 25, DXF 15, density 15, height consistency 10, floor 5).
-Also `wall_height_std < 0.2` awarded 10 points when *no* walls were found
-(std = 0); now requires a nonzero std.
-
-### 5. `recommend.py` recommended commands it then overrode
-
-It computed a `batch_limit` for the detected GPU, then emitted a `run_single.py`
-/ `run_batch.py` command *without* passing it — and both wrappers reset it from
-their own presets. A 48 GB GPU got "batch_limit 80" printed and 16 executed.
-Now both numbers are always passed explicitly. Also removed the `CONFIGS` dict
-(defined, never referenced) and fixed `if args.vram:` rejecting `--vram 0`.
-
-### 6. `recon.npz` stores absolute frame paths
-
-The depth-montage GIF silently skipped every frame if the workdir was moved or
-produced on another machine. `depth_montage_gif` already took a `frames_dir`
-argument but never used it; it is now the fallback lookup by filename.
-
-## Legal / packaging
-
-### Vendoring DA3 — compliance gap, now closed
-
-Vendoring is the right call (removes a `git clone` + editable install from
-setup, which is where Windows users bail). But Apache-2.0 §4 requires shipping
-the license with the redistributed source, and `depth_anything_3/` had no
-`LICENSE`.
-
-Added `depth_anything_3/LICENSE` (upstream text) and
-`depth_anything_3/VENDORED.md` recording provenance and update procedure. Root
-`NOTICE` updated — it still claimed the project vendors nothing.
-
-Verified against upstream: the vendored tree is **byte-identical** to
-`src/depth_anything_3/` at `main` (checked `api.py`, `cli.py`, `registry.py`,
-`specs.py`, `cfg.py`), and all 83 files retain their ByteDance copyright
-headers. Because nothing was modified, no §4(b) "changed files" notice is
-needed — but if you ever patch a vendored file, record it in `VENDORED.md`.
-
-Fill in the upstream commit SHA in `VENDORED.md`; I could not determine which
-commit you vendored from.
-
-### README/code contradictions
-
-- Install said `git clone .../video2cad`; the repo is `phone-video-3d-recon`.
-  Fixed throughout, including `pyproject.toml` URLs.
-- Flags table said `--model DA3-SMALL (default)`; the CLI default is
-  `DA3NESTED-GIANT-LARGE-1.1`. Only the wrapper scripts default to `DA3-SMALL`.
-  Documented exactly, without changing behaviour — see "Decisions for you".
-- Licensing section said no vendoring; now distinguishes vendored *source*
-  (Apache-2.0) from *weights* (per-checkpoint), and notes that the wrappers'
-  `DA3-SMALL` default is already the commercial-safe path.
-- `examples/` was dropped from the upload but exists in the repo — restored.
-
-## Decisions for you
-
-1. **Default checkpoint.** Code defaults to the metric-but-24 GB
-   `DA3NESTED-GIANT-LARGE-1.1`; every config you have actually tested uses
-   `DA3-SMALL`. I left the code alone and made the docs precise. If you'd rather
-   the default be something your own GPU can run, change `DEFAULT_MODEL` in
-   `video2cad/da3_stage.py` *and* the `--model` default in `video2cad/cli.py` —
-   and then flip the CC BY-NC badge, since `DA3-SMALL` is Apache-2.0.
-
-2. **`uv.lock` is gitignored but present in your tree.** For an application
-   (which this is) committing the lock is the usual choice — it pins the exact
-   dependency set that produced your tested numbers. 623 KB. Your call; I left
-   your `.gitignore` as written.
-
-3. **`home_interiors.mp4` (22 MB) is committed on `main`.** Under GitHub's
-   100 MB limit, so it works, but every clone pays 22 MB forever and it's
-   already in history. Options: leave it, move to Git LFS, or drop it and link a
-   release asset. Removing it from history needs a rewrite — decide before the
-   repo gets stars or forks.
-
-4. **Package name stays `video2cad`** inside repo `phone-video-3d-recon`.
-   Python packages can't contain hyphens, so they can't match exactly. Renaming
-   the package to `phone_video_3d_recon` is possible but churns every import for
-   no functional gain.
-
-## Still open (not blocking)
-
-- The accuracy table is still `_TBD_`. This is the highest-value empty slot in
-  the repo — one tape-measured wall vs `planes.json` beats any benchmark
-  citation. Note that fix #2 above changes these numbers, so measure *after*
-  merging.
-- `examples/01_fused_cloud.png`, `02_planes_colored.png`,
-  `03_floor_plan_dxf.png` are referenced by the README and still missing, so
-  the top of the page renders three broken images. You now have `viz/*.gif` —
-  a turntable GIF would be a stronger hero image than a still.
-- The `viz` stage needs an EGL-capable Open3D on headless Linux. It fails
-  gracefully (logged, pipeline continues) and works on Windows; noted in the
-  README.
+3. **Accuracy table and example images** are still the two open placeholders,
+   unchanged from before. A tape-measured wall vs `planes.json` and three result
+   renders remain the highest-value additions before making the repo public.

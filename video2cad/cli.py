@@ -31,7 +31,7 @@ def main() -> int:
     ap.add_argument("--video", type=Path, help="input walkthrough video (mp4/mov/...)")
     ap.add_argument("--workdir", type=Path, required=True, help="output directory")
     ap.add_argument("--stages", default="frames,recon,cad,viz",
-                    help="comma list: frames,recon,cad,viz")
+                    help="comma list: frames,recon,stream,cad,viz")
     # frames
     ap.add_argument("--target-frames", type=int, default=200)
     ap.add_argument("--long-edge", type=int, default=1008)
@@ -43,13 +43,26 @@ def main() -> int:
                     help="drop pixels below this confidence percentile")
     ap.add_argument("--voxel", type=float, default=0.01, help="fusion voxel size (m)")
     ap.add_argument("--max-depth", type=float, default=12.0, help="clip depth beyond (m)")
-    ap.add_argument("--batch-limit", type=int, default=160,
-                    help="max frames per DA3 forward pass (VRAM bound)")
+    ap.add_argument("--max-frames", type=int, default=16,
+                    help="maximum frames for a DA3 single-pass reconstruction")
     ap.add_argument("--device", default="auto", help="auto | cuda | cpu")
     ap.add_argument("--dtype", default="auto",
                     help="auto | float16 | bfloat16 | float32 (Turing GPUs need float16)")
     ap.add_argument("--process-res", type=int, default=504,
                     help="DA3 internal processing resolution (lower = less VRAM, more frames)")
+    # streaming (alternative to recon)
+    ap.add_argument("--streaming-dir", default=None,
+                    help="path to the upstream da3_streaming directory")
+    ap.add_argument("--stream-config", default=None,
+                    help="explicit DA3-Streaming YAML config")
+    ap.add_argument("--chunk-size", type=int, default=None,
+                    help="streaming chunk size; lower values need less VRAM")
+    ap.add_argument("--overlap", type=int, default=None,
+                    help="streaming chunk overlap; defaults to half chunk size")
+    ap.add_argument("--loop", dest="loop", action="store_true", default=None,
+                    help="enable DA3-Streaming loop closure")
+    ap.add_argument("--no-loop", dest="loop", action="store_false",
+                    help="disable DA3-Streaming loop closure")
     # cad
     ap.add_argument("--slice-height", type=float, default=1.2,
                     help="floor-plan cut height above floor (m)")
@@ -92,18 +105,39 @@ def main() -> int:
             conf_percentile=args.conf_percentile,
             voxel_size=args.voxel,
             max_depth=args.max_depth,
-            batch_limit=args.batch_limit,
+            max_frames=args.max_frames,
             device_str=args.device,
             dtype_str=args.dtype,
             process_res=args.process_res,
         )
         manifest["recon"] = {k: str(v) for k, v in res.items()}
 
+    if "stream" in stages:
+        frame_paths = [Path(path) for path in manifest.get("frames", [])]
+        if not frame_paths:
+            frame_paths = sorted(frames_dir.glob("*.jpg"))
+        if not frame_paths:
+            log.error("No frames found - run the 'frames' stage first.")
+            return 1
+        from video2cad.streaming_stage import run_streaming
+        res = run_streaming(
+            frame_paths,
+            args.workdir,
+            streaming_dir=args.streaming_dir,
+            config=args.stream_config,
+            chunk_size=args.chunk_size,
+            overlap=args.overlap,
+            loop_enable=args.loop,
+            process_res=args.process_res,
+        )
+        manifest["stream"] = {k: str(value) for k, value in res.items()}
+        manifest.setdefault("recon", {})["point_cloud"] = str(res["point_cloud"])
+
     if "cad" in stages:
         pcd = Path(manifest.get("recon", {}).get("point_cloud",
                    args.workdir / "recon" / "fused_points.ply"))
         if not pcd.exists():
-            log.error("No fused_points.ply - run the 'recon' stage first.")
+            log.error("No fused_points.ply - run the 'recon' or 'stream' stage first.")
             return 1
         from video2cad.cad_stage import extract_cad
         res = extract_cad(pcd, args.workdir / "cad", slice_height=args.slice_height,
